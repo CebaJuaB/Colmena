@@ -1,5 +1,4 @@
-/*
-                              GPIO      
+/*                           GPIO      
 ESP32           5.0V                      
                 3.3V                      
                 GND                       
@@ -20,8 +19,8 @@ Sensor de luz   Exterior      36
 Panel solar     +V
                 -V
 Bateria         +Bat
-                -Bat
-*/
+                -Bat                  */
+
 #include <Arduino.h>
 #include "sdkconfig.h"
 #include <esp_system.h>
@@ -52,19 +51,18 @@ Bateria         +Bat
 #include "FS.h"
 #include "SD.h"
 #include "SPI.h"
-
 #define   SEALEVELPRESSURE_HPA      (1013.25)                     // Presión atmosférica al nivel del mar
-
-#define   SENSOR_PERIOD             12000                         // Periodo en milisegundos de lectura de sensores
-#define   SD_PERIOD                 18000                         // Periodo en milisegundos de escritura a la SD
-#define   MQTT_PERIOD               30000                         // Periodo en milisegundos de envio a MQTT
-#define   HOST_PERIOD               18000                         // Periodo en milisegundos de POST al HOST
-#define   WEB_PERIOD                21000                         // Periodo en milisegundos de POST a la Web (ThingSpeak)
+#define   SENSOR_PERIOD             24000                         // Periodo en milisegundos de lectura de sensores
+#define   SD_PERIOD                 36000                         // Periodo en milisegundos de escritura a la SD
+#define   MQTT_PERIOD               54000                         // Periodo en milisegundos de envio a MQTT
+#define   HOST_PERIOD               48000                         // Periodo en milisegundos de POST al HOST
+#define   WEB_PERIOD                72000                         // Periodo en milisegundos de POST a la Web (ThingSpeak)
 #define   TIMER_PERIOD              24000                         // Periodo en milisegundos del temporizador luz LCD
-#define   WDT_RST_PERIOD            3000                          // Periodo en milisegundos reinicia watchdog
-#define   WDT_TIMEOUT               600                           // Tiempo en segundos para el watchdog reinicia procesador
-
-
+#define   WDT_RST_PERIOD            9000                          // Periodo en milisegundos reinicia watchdog
+#define   WDT_TIMEOUT               1200                          // Tiempo en segundos para el watchdog reinicia procesador
+#define   ML_PERIOD                 120000                        // Periodo en milisegundos lazo principal antes de dormir
+#define   TIME_TO_SLEEP             900                           // Tiempo en segundos que duerme el sistema
+#define   uS_TO_S_FACTOR            1000000                       // Constante para convertir microsegundos a segundos
 #define   LED                       GPIO_NUM_2                    // Salida para encender LED EPS32
 #define   INPUT_PIN                 GPIO_NUM_34                   // Pulsador para encender luz de fondo del LCD
 #define   L_PIN                     GPIO_NUM_36                   // Sensor de luz
@@ -72,46 +70,45 @@ Bateria         +Bat
 #define   DHT_2_PIN                 GPIO_NUM_15                   // Sensor humedad y temperatura exterior
 #define   DHTTYPE_1                 DHT22                         // Tipo del sensor de humedad y temperatura colmena
 #define   DHTTYPE_2                 DHT22                         // Tipo del sensor de humedad y temperatura exterior
-
 DHT               dht_1(DHT_1_PIN, DHTTYPE_1);
 DHT               dht_2(DHT_2_PIN, DHTTYPE_2);
-
 uRTCLib           rtc(0x68);                                      // Dirección I2C RTC
 Adafruit_BME280   bme;                                            // Tipo sensor de presión
-int lcdColumns = 20;
-int lcdRows = 4;
-LiquidCrystal_I2C lcd(0x27, lcdColumns, lcdRows);                               // Dirección I2C LCD
-
-const UBaseType_t Priority_1        =   1;
-const UBaseType_t Priority_2        =   10;
-
+int lcdColumns                      = 20;
+int lcdRows                         = 4;
+LiquidCrystal_I2C lcd(0x27, lcdColumns, lcdRows);                 // Dirección I2C LCD
+byte degree[8] = {
+  0b00100,
+  0b01010,
+  0b10001,
+  0b01010,
+  0b00100,
+  0b00000,
+  0b00000,
+  0b00000
+};
+const UBaseType_t Priority_1        =   10;
+const UBaseType_t Priority_2        =   1;
 SemaphoreHandle_t xSemaforo_Serial  =   NULL;
 SemaphoreHandle_t xSemaforo_WiFi    =   NULL;
 SemaphoreHandle_t xSemaforo_Datos   =   NULL;
-
 const             IPAddress         host_mac(192,168,18,212);
-
 /* Credenciales WokWi
 const char* ssid                    = "Wokwi-GUEST";              //Simulador WokWi
-const char* password                = ""; 
-*/
-
+const char* password                = ""; */
 // Credenciales WiFi local
 const char*       ssid              = "HomeNet";
 const char*       password          = "Ana_Isabel_Ce";
-
 // Parámetros POST servidor MacBook
 const char*       lserverName       = "http://192.168.18.212/post-esp-data.php";
 String            apiKeyValue       = "tPmAT5Ab3j7F9";
 WiFiClient        lespClient;
 PubSubClient      lclient(lespClient);
-
 // Parámetros POST para Thingspeak
 const char*       serverName        = "http://api.thingspeak.com/update"; 
 String            apiKey            = "G0OYYV3AOQUPCMG5";                
 WiFiClient        espClient;
 PubSubClient      client(espClient);
-
 // Parámetros MQTT
 const char        *mqtt_broker      = "broker.emqx.io";
 const char        *topic            = "emqx/esp32";
@@ -120,13 +117,11 @@ const char        *mqtt_password    = "public";
 const int         mqtt_port         = 1883;
 WiFiClient        mespClient;
 PubSubClient      mclient(mespClient);
-
 // Parámetros RTC
 const char*       ntpServer         = "pool.ntp.org";             //Fuente tiempo RTC
 const long        gmtOffset_sec     = -18000;                     //Colombia GMT-5
 const int     daylightOffset_sec    = 0;                          //Colombia no usa DST
 const char    daysOfTheWeek[7][12]  = {"Domingo", "Lunes",  "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"};
-
 // Datos que se publican en cada iteracción                                  
 float       temperatura_colmena     = 0;
 float       humedad_colmena         = 0;
@@ -141,26 +136,11 @@ int         year                    = 0;
 int         month                   = 0;
 int         day                     = 0;
 int         dayOfWeek               = 0;
-
 uint32_t    cpt                     = 0;                          // Contador de interrupciones del pulsador
-
-// Function Declarations
-void        connectToWiFi();
-void        setRTC();
-void        setBME();
-void        setMQTT();
-void        printLocalTime();
-void        leer_rtc();
-void        display_LCD();
-void        connectToWiFi();
-void        reconnect();
+RTC_DATA_ATTR int bootCount         = 0;                          // Number of reboots
 
 static void IRAM_ATTR gpio_interrupt_handler(void *args){
   cpt++;
-  if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
-    Serial.print("Interrupción recibida\n");
-    xSemaphoreGive(xSemaforo_Serial);
-  }
 }
 
 void autoReloadTimerCallback(TimerHandle_t xTimer){
@@ -169,6 +149,113 @@ void autoReloadTimerCallback(TimerHandle_t xTimer){
     xSemaphoreGive(xSemaforo_Serial);
   }
   lcd.noBacklight();
+}
+
+void connectToWiFi() {
+  WiFi.mode(WIFI_STA);                        
+  WiFi.begin(ssid, password);
+  vTaskDelay(3000);
+  Serial.printf("Conectando a %s", ssid);
+  lcd.setCursor(6, 2);
+  lcd.print(ssid);
+  while (WiFi.status() != WL_CONNECTED) {
+    vTaskDelay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.printf("ESP32 tiene el IP %s\n", WiFi.localIP().toString().c_str());
+  Serial.print("IP del Gateway: ");
+  Serial.println(WiFi.gatewayIP());
+  Serial.print(host_mac);
+  if (Ping.ping(host_mac) > 0){
+    Serial.printf(" tiempo de respuesta del HOST MacBook : %d/%.2f/%d ms\n", Ping.minTime(), Ping.averageTime(), Ping.maxTime());
+  } else {
+    Serial.println(" Error de Ping al HOST MacBook !");
+  }    
+  lcd.setCursor(6, 0);
+  lcd.print(WiFi.localIP().toString().c_str());
+}
+
+void reconnect() {
+  while (!mclient.connected()) {
+    Serial.print("Intentando re-conexión al MQTT... ");
+    if (mclient.connect("ESP32Client")) {
+      Serial.println("Conectado al servidor de MQTT");
+    } else {
+      Serial.print("falló, rc= ");
+      Serial.print(mclient.state());
+      Serial.println(". Probando nuevamente en 5 segundos");
+      vTaskDelay(5000);
+    }
+  }
+  mclient.subscribe("emqx/esp32");
+}
+
+void leer_rtc(){
+  char buff[5];
+  rtc.refresh();
+  hora      = rtc.hour();
+  minuto    = rtc.minute();
+  segundo   = rtc.second();
+  year      = rtc.year();
+  month     = rtc.month();
+  day       = rtc.day();
+  dayOfWeek = rtc.dayOfWeek()-1;
+
+  int decminuto = int(minuto/10);
+  int uniminuto = int(minuto%10);
+  
+  if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+    Serial.print("Tiempo del RTC: ");
+    Serial.print(year);
+    Serial.print('/');
+    Serial.print(month);
+    Serial.print('/');
+    Serial.print(day);
+    Serial.print(" ");
+    Serial.print(" (");
+    Serial.print(daysOfTheWeek[dayOfWeek]);
+    Serial.print(") ");
+    Serial.print(hora);
+    Serial.print(':');
+    Serial.print(minuto);
+    Serial.print(':');
+    Serial.println(segundo);
+    xSemaphoreGive(xSemaforo_Serial);
+  }
+  lcd.setCursor(0, 0);
+  sprintf(buff, "%2d:%d%d", hora, decminuto, uniminuto);
+  lcd.print(buff);
+}
+
+void display_LCD(){
+  lcd.setCursor(2, 0);
+  lcd.print(" ");
+  lcd.setCursor(0, 1);
+  lcd.print("Hive  ");
+  lcd.print(F(""));
+  lcd.print(humedad_colmena,0);
+  lcd.print(F("%  "));
+  lcd.print(temperatura_colmena,1);
+  lcd.write(0);
+  lcd.print(F("C"));
+  lcd.setCursor(0, 2);
+  lcd.print("Ext.  ");
+  lcd.print(F(""));
+  lcd.print(humedad_ambiente,0);
+  lcd.print(F("%  "));
+  lcd.print(temperatura_ambiente,1);
+  lcd.write(0);
+  lcd.print(F("C"));
+  lcd.setCursor(0, 3);
+  lcd.print(F("P "));
+  lcd.print(presion_atmosferica);
+  lcd.print(F("hPa"));
+  lcd.setCursor(12, 3);
+  lcd.print(F("L.A "));
+  lcd.print(indice_luminico);
+  lcd.setCursor(2, 0);
+  lcd.print(":");
 }
 
 void LeerSensores(void *pvParameters){
@@ -192,27 +279,36 @@ void LeerSensores(void *pvParameters){
     if (isnan(temperatura_colmena) || isnan(humedad_colmena)) {
       Serial.println(F("No hay lectura del sensor de la colmena"));
     } else {
-      Serial.print(F("Humedad colmena: "));
-      Serial.print(humedad_colmena);
-      Serial.print(F("%  Temperatura colmena: "));
-      Serial.print(temperatura_colmena);
-      Serial.println(F("°C"));
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.print(F("Humedad colmena: "));
+        Serial.print(humedad_colmena);
+        Serial.print(F("%  Temperatura colmena: "));
+        Serial.print(temperatura_colmena);
+        Serial.println(F("°C"));
+        xSemaphoreGive(xSemaforo_Serial);
+      }
     }
     if (isnan(temperatura_ambiente) || isnan(humedad_ambiente)) {
       Serial.println(F("No hay lectura del sensor de humedad del ambiente"));
     } else {
-      Serial.print(F("Humedad ambiente: "));
-      Serial.print(humedad_ambiente);
-      Serial.print(F("%  Temperatura externa: "));
-      Serial.print(temperatura_ambiente);
-      Serial.println(F("°C"));
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.print(F("Humedad ambiente: "));
+        Serial.print(humedad_ambiente);
+        Serial.print(F("%  Temperatura externa: "));
+        Serial.print(temperatura_ambiente);
+        Serial.println(F("°C"));
+        xSemaphoreGive(xSemaforo_Serial);
+      }
     }
-    Serial.print(F("Luz ambiente (normalizada entre 0 y 1): "));
-    Serial.println(indice_luminico); 
-    Serial.print("Presión atmosférica: ");
-    Serial.print(presion_atmosferica);
-    Serial.println("hPa");
-    Serial.println();
+    if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+      Serial.print(F("Luz ambiente (normalizada entre 0 y 1): "));
+      Serial.println(indice_luminico); 
+      Serial.print("Presión atmosférica: ");
+      Serial.print(presion_atmosferica);
+      Serial.println("hPa");
+      Serial.println();
+      xSemaphoreGive(xSemaforo_Serial);
+    }
     display_LCD();
     digitalWrite(LED, LOW);
     vTaskDelay(SENSOR_PERIOD);
@@ -220,46 +316,24 @@ void LeerSensores(void *pvParameters){
 }
 
 void appendFile(fs::FS &fs, const char * path, const char * message){
-  Serial.printf("Appending to file: %s\n", path);
-
+  if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+    Serial.printf("Adicionando al archivo: %s\n", path);
+    xSemaphoreGive(xSemaforo_Serial);
+  }
   File file = fs.open(path, FILE_APPEND);
   if(!file){
     Serial.println("Failed to open file for appending");
     return;
   }
-  if(file.print(message)){
-      Serial.println("Lectura adicionada");
-  } else {
-    Serial.println("Append failed");
+  if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+    if(file.print(message)){
+      Serial.println("Lectura adicionada al SD");
+    } else {
+      Serial.println("No se pudo adicionar lectura en el SD");
+    }
+    xSemaphoreGive(xSemaforo_Serial);
   }
   file.close();
-}
-
-void WriteSD(void *pvParameters){
-  String      SD_Data;
-  for (;;){
-      if (xSemaphoreTake(xSemaforo_Datos, (TickType_t) 5 ) == pdTRUE){
-        SD_Data = String(year)                + ","   +
-                  String(month)               + ","   +
-                  String(day)                 + ","   +
-                  String(hora)                + ","   +
-                  String(segundo)             + ","   +
-                  String(temperatura_colmena) + ","   + 
-                  String(humedad_colmena)     + ","   +
-                  String(temperatura_ambiente)+ ","   +
-                  String(humedad_ambiente)    + ","   +
-                  String(presion_atmosferica) + ","   +
-                  String(indice_luminico)     + "\r\n";        
-        xSemaphoreGive(xSemaforo_Datos);
-      }
-    appendFile(SD, "/colmena.csv", SD_Data.c_str());
-    if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
-      Serial.println("Escribiendo en la SD");
-      Serial.println(SD_Data.c_str());
-      xSemaphoreGive(xSemaforo_Serial);
-    }
-    vTaskDelay(SD_PERIOD);
-  }
 }
 
 void MQTT(void *pvParameters){
@@ -276,67 +350,68 @@ void MQTT(void *pvParameters){
   char    press_String[8];
   char    indice_String[8];
   char    frame[49];
-  String  trama;
-  frame[0]= '\0';
+  // String  trama;
   for (;;){
-      if (xSemaphoreTake(xSemaforo_Datos, (TickType_t) 5 ) == pdTRUE){
-        dtostrf(year, 1, 0, yearString);
-        dtostrf(month, 1, 0, monthString);
-        dtostrf(day, 1, 0, dayString);
-        dtostrf(hora, 1, 0, hourString);
-        dtostrf(minuto, 1, 0, minuteString);
-        dtostrf(segundo, 1, 0, secondString);
-        dtostrf(temperatura_colmena, 1, 1, tempString);
-        dtostrf(humedad_colmena, 1, 0, humString);
-        dtostrf(temperatura_ambiente, 1, 1, temp_a_String);
-        dtostrf(humedad_ambiente, 1, 0, hum_a_String);
-        dtostrf(presion_atmosferica, 1, 2, press_String);
-        dtostrf(indice_luminico, 1, 2, indice_String);
-        strcat(frame, yearString);
-        strcat(frame, ",");
-        strcat(frame, monthString);
-        strcat(frame, ",");
-        strcat(frame, dayString);
-        strcat(frame, ",");
-        strcat(frame, hourString);
-        strcat(frame, ",");
-        strcat(frame, minuteString);
-        strcat(frame, ",");
-        strcat(frame, secondString);
-        strcat(frame, ",");
-        strcat(frame, tempString);
-        strcat(frame, ",");
-        strcat(frame, humString);
-        strcat(frame, ",");
-        strcat(frame, temp_a_String);
-        strcat(frame, ",");
-        strcat(frame, hum_a_String);
-        strcat(frame, ",");
-        strcat(frame, press_String);
-        strcat(frame, ",");
-        strcat(frame, indice_String);
-        strcat(frame, "\n");
-        strcat(frame, "\0");
-        xSemaphoreGive(xSemaforo_Datos);
+    mclient.loop();
+    frame[0]= '\0';
+    if (xSemaphoreTake(xSemaforo_Datos, (TickType_t) 5 ) == pdTRUE){
+      dtostrf(year, 1, 0, yearString);
+      dtostrf(month, 1, 0, monthString);
+      dtostrf(day, 1, 0, dayString);
+      dtostrf(hora, 1, 0, hourString);
+      dtostrf(minuto, 1, 0, minuteString);
+      dtostrf(segundo, 1, 0, secondString);
+      dtostrf(temperatura_colmena, 1, 1, tempString);
+      dtostrf(humedad_colmena, 1, 0, humString);
+      dtostrf(temperatura_ambiente, 1, 1, temp_a_String);
+      dtostrf(humedad_ambiente, 1, 0, hum_a_String);
+      dtostrf(presion_atmosferica, 1, 2, press_String);
+      dtostrf(indice_luminico, 1, 2, indice_String);
+      strcat(frame, yearString);
+      strcat(frame, ",");
+      strcat(frame, monthString);
+      strcat(frame, ",");
+      strcat(frame, dayString);
+      strcat(frame, ",");
+      strcat(frame, hourString);
+      strcat(frame, ",");
+      strcat(frame, minuteString);
+      strcat(frame, ",");
+      strcat(frame, secondString);
+      strcat(frame, ",");
+      strcat(frame, tempString);
+      strcat(frame, ",");
+      strcat(frame, humString);
+      strcat(frame, ",");
+      strcat(frame, temp_a_String);
+      strcat(frame, ",");
+      strcat(frame, hum_a_String);
+      strcat(frame, ",");
+      strcat(frame, press_String);
+      strcat(frame, ",");
+      strcat(frame, indice_String);
+      strcat(frame, "\n");
+      strcat(frame, "\0");
+      xSemaphoreGive(xSemaforo_Datos);
+    }
+    if (xSemaphoreTake(xSemaforo_WiFi, (TickType_t) 5 ) == pdTRUE){
+      if (!mclient.connected()) {
+        reconnect();
       }
-      if (xSemaphoreTake(xSemaforo_WiFi, (TickType_t) 5 ) == pdTRUE){
-        if (!mclient.connected()) {
-          reconnect();
-        }
-        mclient.publish("emqx/temperatura_colmena", tempString);
-        mclient.publish("emqx/humedad_colmena", humString);
-        mclient.publish("emqx/temperatura_ambiente", temp_a_String);
-        mclient.publish("emqx/humedad_ambiente", hum_a_String);
-        mclient.publish("emqx/presion", press_String);
-        mclient.publish("emqx/indice", indice_String);
-        mclient.publish("emqx/trama", frame);
-        if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
-          Serial.print("Enviar MQTT: ");
-          Serial.println(frame);
-          xSemaphoreGive(xSemaforo_Serial);
-        }
-        xSemaphoreGive(xSemaforo_WiFi);
+      mclient.publish("emqx/temperatura_colmena", tempString);
+      mclient.publish("emqx/humedad_colmena", humString);
+      mclient.publish("emqx/temperatura_ambiente", temp_a_String);
+      mclient.publish("emqx/humedad_ambiente", hum_a_String);
+      mclient.publish("emqx/presion", press_String);
+      mclient.publish("emqx/indice", indice_String);
+      mclient.publish("emqx/trama", frame);
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.print("Enviar MQTT: ");
+        Serial.println(frame);
+        xSemaphoreGive(xSemaforo_Serial);
       }
+      xSemaphoreGive(xSemaforo_WiFi);
+    }
     vTaskDelay(MQTT_PERIOD);
   }
 }
@@ -419,7 +494,6 @@ void PostDB(void *pvParameters){
 
 void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
   Serial.printf("Listing directory: %s\n", dirname);
-
   File root = fs.open(dirname);
   if(!root){
     Serial.println("Failed to open directory");
@@ -484,7 +558,6 @@ void readFile(fs::FS &fs, const char * path){
 
 void writeFile(fs::FS &fs, const char * path, const char * message){
   Serial.printf("Writing file: %s\n", path);
-
   File file = fs.open(path, FILE_WRITE);
   if(!file){
     Serial.println("Failed to open file for writing");
@@ -555,239 +628,6 @@ void testFileIO(fs::FS &fs, const char * path){
   file.close();
 }
 
-void setup(){
-  Serial.begin(115200);
-  lcd.init();  
-  lcd.backlight();
-  lcd.setCursor(0, 0);
-  lcd.print(" Juan Ceballos 2025");
-
-  xSemaforo_Serial  = xSemaphoreCreateMutex();
-  xSemaforo_WiFi    = xSemaphoreCreateMutex();
-  xSemaforo_Datos   = xSemaphoreCreateMutex();
-
-  TaskHandle_t  xHandleSensores   = NULL;
-  TaskHandle_t  xHandleMQTT       = NULL;
-  TaskHandle_t  xHandleWeb        = NULL;
-  TaskHandle_t  xHandleDB         = NULL;
-  TaskHandle_t  xHandleSD         = NULL;
-
-  TimerHandle_t xAutoReloadTimer;
-
-  connectToWiFi();
-  setMQTT();                                      // Conectar al MQTT broker
-
-  setRTC();                                       // Obtener tiempo de la  Internet e iniciar RTC
-  dht_1.begin();                                  // Iniciar sensor humedad y temperatura colmena
-  dht_2.begin();                                  // Iniciar sensor humedad y temperatura externo
-  setBME();                                       // Iniciar sensor de presión atmosférica
-  pinMode(LED, OUTPUT);
-
-  Serial.println();
-
-  if(!SD.begin(5)){
-    Serial.println("Card Mount Failed");
-    return;
-  }
-  uint8_t cardType = SD.cardType();
-
-  if(cardType == CARD_NONE){
-    Serial.println("No SD card attached");
-    return;
-  }
-
-  Serial.print("SD Card Type: ");
-  if(cardType == CARD_MMC){
-    Serial.println("MMC");
-  } else if(cardType == CARD_SD){
-    Serial.println("SDSC");
-  } else if(cardType == CARD_SDHC){
-    Serial.println("SDHC");
-  } else {
-    Serial.println("UNKNOWN");
-  }
-
-  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-  Serial.printf("SD Card Size: %lluMB\n", cardSize);
-
-  listDir(SD, "/", 0);
-  // createDir(SD, "/mydir");
-  // listDir(SD, "/", 0);
-  // removeDir(SD, "/mydir");
-  // listDir(SD, "/", 2);
-  // writeFile(SD, "/hello.txt", "Hello ");
-  // appendFile(SD, "/hello.txt", "World!\n");
-  // readFile(SD, "/hello.txt");
-  // If the file doesn't exist
-  // Create a file on the SD card and write the data labels
-  // deleteFile(SD, "/colmena.csv");
-  File file = SD.open("/colmena.csv");
-  if(!file) {
-    Serial.println("El archivo colmena.csv no existe");
-    // Serial.println("Creando el archivo colmena.csv");
-    writeFile(SD, "/colmena.csv", "Colmena Altos de Cantaclaro\n");
-    appendFile(SD, "/colmena.csv", "Juan Bernardo Ceballos\n");
-    appendFile(SD, "/colmena.csv", "Latitud: 2°30'40.1 Norte   Longitud: 76°33'20.5 Oeste  Elevacion: 1820 metros\n");
-    appendFile(SD, "/colmena.csv",  "Year, Month, Day, Hour, Minute, Second, Hive Temperature (°C), Hive Humidity (%), Ambient Temperature (°C), Ambient Humidity (%), Atmospheric presure hPa, Luminic index (normalized) \n");
-  }
-  else {
-    Serial.println("Archivo ya existe");  
-  }
-  file.close();
-  // renameFile(SD, "/hello.txt", "/foo.txt");
-  // readFile(SD, "/foo.txt");
-  // testFileIO(SD, "/test.txt");
-  readFile(SD, "/colmena.csv");
-  Serial.printf("Total space: %lluMB\n", SD.totalBytes() / (1024 * 1024));
-  Serial.printf("Used space: %lluMB\n", SD.usedBytes() / (1024 * 1024));
-  Serial.println();
-
-  xTaskCreatePinnedToCore(
-                LeerSensores,     // Entry function of the task
-                "Sensores",       // Name of the task
-                2048,             // The number of words to allocate for use as the task's stack 
-                NULL,             // No parameter passed to the task
-                Priority_1,                                           
-                &xHandleSensores,
-                0);               // Task executed on core 0
-  xTaskCreatePinnedToCore(
-                WriteSD,          // Entry function of the task
-                "SD",             // Name of the task
-                4096,             // The number of words to allocate for use as the task's stack 
-                NULL,             // No parameter passed to the task
-                Priority_2,                                           
-                &xHandleSD,
-                0);               // Task executed on core 0
-  xTaskCreatePinnedToCore(
-                MQTT,             // Entry function of the task
-                "MQTT",           // Name of the task
-                4096,             // The number of words to allocate for use as the task's stack 
-                NULL,             // No parameter passed to the task
-                Priority_2,       // Priority of the task
-                &xHandleMQTT,
-                1);               // Task executed on core 1
-  xTaskCreatePinnedToCore(
-                PostWeb,          // Entry function of the task
-                "POST_WEB",       // Name of the task
-                4096,             // The number of words to allocate for use as the task's stack 
-                NULL,             // No parameter passed to the task
-                Priority_2,       // Priority of the task
-                &xHandleWeb,
-                1);               // Task executed on core 1
-  xTaskCreatePinnedToCore(
-                PostDB,           // Entry function of the task
-                "POST_DB",        // Name of the task
-                4096,             // The number of words to allocate for use as the task's stack 
-                NULL,             // No parameter passed to the task
-                Priority_2,       // Priority of the task
-                &xHandleDB,
-                1);               // Task executed on core 1
-
-
-  esp_task_wdt_init(WDT_TIMEOUT, true);                       // Enable panic so ESP32 restarts
-  esp_task_wdt_add(NULL);                                     // Add current thread to WDT watch
-
-  gpio_set_direction(INPUT_PIN, GPIO_MODE_INPUT);                               // Configure INPUT_PIN as input
-  gpio_pulldown_en(INPUT_PIN);                                                  // Enable the pull-down for INPUT_PIN
-  gpio_pullup_dis(INPUT_PIN);                                                   // Disable the pull-up for INPUT_PIN
-  gpio_set_intr_type(INPUT_PIN, GPIO_INTR_POSEDGE);                             // Interrupt triggers when state of the INPUT_PIN goes from LOW to HIGH
-  gpio_install_isr_service(0);                                                  // Install  GPIO ISR service, which allows per-pin GPIO interrupt handlers
-  gpio_isr_handler_add(INPUT_PIN, gpio_interrupt_handler, (void *)INPUT_PIN);   // Configure gpio_interrupt_handler function has ISR handler for INPUT_PIN
-
-  xAutoReloadTimer = xTimerCreate("AutoReloadTimer",              // Name of the timer
-                                    pdMS_TO_TICKS(TIMER_PERIOD),  // The period of the timer specified in ticks
-                                    pdFALSE,                      // The timer will not auto-reload when it expires
-                                    0,                            // Identifier of the timer
-                                    autoReloadTimerCallback);     // Callback function
-
-  xTimerStart(xAutoReloadTimer, 0);                               // Temporizador para apagar luz del fondo del LCD
-
-  for (;;){
-    if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
-      Serial.println("Reiniciando el temporizador del Watchdog");
-      xSemaphoreGive(xSemaforo_Serial);
-    }
-    esp_task_wdt_reset();
-    if(cpt>0){
-      lcd.backlight();
-      xTimerStart(xAutoReloadTimer, 0);
-      cpt=0;
-      Serial.println();
-      readFile(SD, "/colmena.csv");
-      Serial.println(); 
-    }
-    if ((SD.totalBytes()*.99) <  SD.usedBytes()){
-      deleteFile(SD, "/colmena.csv");
-      Serial.println("SD llena, el archivo colmena.csv ha sido borrado.");
-      File file = SD.open("/colmena.csv");
-      writeFile(SD, "/colmena.csv", "Colmena Altos de Cantaclaro\n");
-      appendFile(SD, "/colmena.csv", "Juan Bernardo Ceballos\n");
-      appendFile(SD, "/colmena.csv", "Latitud: 2°30'40.1 Norte   Longitud: 76°33'20.5 Oeste  Elevacion: 1820 metros\n");
-      appendFile(SD, "/colmena.csv",  "Year, Month, Day, Hour, Minute, Second, Hive Temperature (°C), Hive Humidity (%), Ambient Temperature (°C), Ambient Humidity (%), Atmospheric presure hPa, Luminic index (normalized) \n");
-      readFile(SD, "/colmena.csv");
-      Serial.printf("Espacio total de la SD: %lluMB\n", SD.totalBytes() / (1024 * 1024));
-      Serial.printf("Espacio utilizado en la SD: %lluMB\n", SD.usedBytes() / (1024 * 1024));
-      Serial.println();
-      file.close();
-    }
-    mclient.loop();
-    vTaskDelay(WDT_RST_PERIOD); 
-  };
-}
-
-void connectToWiFi() {
-    WiFi.mode(WIFI_STA);                        
-    WiFi.begin(ssid, password);
-    vTaskDelay(3000);
-    Serial.printf("Conectando a %s", ssid);
-    lcd.setCursor(6, 2);
-    lcd.print(ssid);
-    while (WiFi.status() != WL_CONNECTED) {
-      vTaskDelay(500);
-      Serial.print(".");
-    }
-    Serial.println();
-    Serial.printf("ESP32 tiene el IP %s\n", WiFi.localIP().toString().c_str());
-    Serial.print("IP del Gateway: ");
-    Serial.println(WiFi.gatewayIP());
-    Serial.print(host_mac);
-    if (Ping.ping(host_mac) > 0){
-      Serial.printf(" tiempo de respuesta del HOST MacBook : %d/%.2f/%d ms\n", Ping.minTime(), Ping.averageTime(), Ping.maxTime());
-    } else {
-      Serial.println(" Error de Ping al HOST MacBook !");
-    }    
-    lcd.setCursor(6, 0);
-    lcd.print(WiFi.localIP().toString().c_str());
-}
-
-void display_LCD(){
-  lcd.setCursor(2, 0);
-  lcd.print(" ");
-  lcd.setCursor(0, 1);
-  lcd.print("Hive  ");
-  lcd.print(F(""));
-  lcd.print(humedad_colmena);
-  lcd.print(F("%  "));
-  lcd.print(temperatura_colmena);
-  lcd.print(F("C"));
-  lcd.setCursor(0, 2);
-  lcd.print("Ext.  ");
-  lcd.print(F(""));
-  lcd.print(humedad_ambiente);
-  lcd.print(F("%  "));
-  lcd.print(temperatura_ambiente);
-  lcd.print(F("C"));
-  lcd.setCursor(0, 3);
-  lcd.print(F("P "));
-  lcd.print(presion_atmosferica);
-  lcd.print(F("hPa"));
-  lcd.setCursor(12, 3);
-  lcd.print(F("L.A "));
-  lcd.print(indice_luminico);
-  lcd.setCursor(2, 0);
-  lcd.print(":");
-}
-
 void callback(char *topic, byte *payload, unsigned int length) {
   Serial.print("Mensaje recibido para el topico: ");
   Serial.println(topic);
@@ -827,27 +667,11 @@ void setMQTT(){
         delay(2000);
       }
     }
-    // mclient.publish(topic, "Hola, soy el ESP32 de Juan Ceballos");
     mclient.publish(topic, "Colmena Altos de Cantaclaro");
     mclient.publish(topic, "Juan Bernardo Ceballos");
     mclient.publish(topic, "Latitud: 2°30'40.1 Norte   Longitud: 76°33'20.5 Oeste  Elevacion: 1820 metros");
-    mclient.publish("emqx/trama", "Year, Month, Day, Hour, Minute, Second, Hive Temperature (°C), Hive Humidity (%), Ambient Temperature (°C), Ambient Humidity (%), Atmospheric presure hPa, Luminic index (normalized)");
+    mclient.publish("emqx/trama", "Year, Month, Day, Hour, Minute, Second, Hive Temperature (°C), Hive Humidity (%), Ambient Temperature (°C), Ambient Humidity (%), Atmospheric presure (hPa), Luminic index (normalized)");
     mclient.subscribe(topic);
-}
-
-void reconnect() {
-  while (!mclient.connected()) {
-    Serial.print("Intentando re-conexión al MQTT... ");
-    if (mclient.connect("ESP32Client")) {
-      Serial.println("Conectado al servidor de MQTT");
-    } else {
-      Serial.print("falló, rc= ");
-      Serial.print(mclient.state());
-      Serial.println(". Probando nuevamente en 5 segundos");
-      vTaskDelay(5000);
-    }
-  }
-  mclient.subscribe("emqx/esp32");
 }
 
 void setBME(){
@@ -858,16 +682,71 @@ void setBME(){
   }
 }
 
-void setRTC(){
-  struct tm timeinfo;
-  URTCLIB_WIRE.begin();                                     //Start RTC
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  if(!getLocalTime(&timeinfo)){
-    Serial.println("No se obtuvo el tiempo");
+void setSD(){
+  Serial.println();
+  if(!SD.begin(5)){
+    Serial.println("Card Mount Failed");
     return;
   }
-  rtc.set(timeinfo.tm_sec, timeinfo.tm_min, timeinfo.tm_hour, timeinfo.tm_wday+1, timeinfo.tm_mday, timeinfo.tm_mon+1, timeinfo.tm_year-100);
-  printLocalTime();
+  uint8_t cardType = SD.cardType();
+  if(cardType == CARD_NONE){
+    Serial.println("No SD card attached");
+    return;
+  }
+  Serial.print("SD Card Type: ");
+  if(cardType == CARD_MMC){
+    Serial.println("MMC");
+  } else if(cardType == CARD_SD){
+    Serial.println("SDSC");
+  } else if(cardType == CARD_SDHC){
+    Serial.println("SDHC");
+  } else {
+    Serial.println("UNKNOWN");
+  }
+  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+  Serial.printf("SD Card Size: %lluMB\n", cardSize);
+  listDir(SD, "/", 0);
+  // Create a file on the SD card and write the data labels
+  // deleteFile(SD, "/colmena.csv");
+  File file = SD.open("/colmena.csv");
+  if(!file) {
+    if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+      Serial.println("El archivo colmena.csv no existe");
+      xSemaphoreGive(xSemaforo_Serial);
+    }
+    writeFile(SD, "/colmena.csv", "Colmena Altos de Cantaclaro\n");
+    appendFile(SD, "/colmena.csv", "Juan Bernardo Ceballos\n");
+    appendFile(SD, "/colmena.csv", "Latitud: 2°30'40.1 Norte   Longitud: 76°33'20.5 Oeste  Elevacion: 1820 metros\n");
+    appendFile(SD, "/colmena.csv",  "Year, Month, Day, Hour, Minute, Second, Hive Temperature (°C), Hive Humidity (%), Ambient Temperature (°C), Ambient Humidity (%), Atmospheric presure hPa, Luminic index (normalized) \n");
+  }
+  else {
+    if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+      Serial.println("Archivo ya existe"); 
+      xSemaphoreGive(xSemaforo_Serial);
+    } 
+  }
+  file.close();
+  readFile(SD, "/colmena.csv");
+  if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+    Serial.printf("Total space: %lluMB\n", SD.totalBytes() / (1024 * 1024));
+    Serial.printf("Used space: %lluMB\n", SD.usedBytes() / (1024 * 1024));
+    Serial.println();
+    xSemaphoreGive(xSemaforo_Serial);
+  }
+}
+
+void setWDT(){
+  esp_task_wdt_init(WDT_TIMEOUT, true);                                         // Enable panic so ESP32 restarts
+  esp_task_wdt_add(NULL);                                                       // Add current thread to WDT watch
+}
+
+void setINT(){
+  gpio_set_direction(INPUT_PIN, GPIO_MODE_INPUT);                               // Configure INPUT_PIN as input
+  gpio_pulldown_en(INPUT_PIN);                                                  // Enable the pull-down for INPUT_PIN
+  gpio_pullup_dis(INPUT_PIN);                                                   // Disable the pull-up for INPUT_PIN
+  gpio_set_intr_type(INPUT_PIN, GPIO_INTR_POSEDGE);                             // Interrupt triggers when state of the INPUT_PIN goes from LOW to HIGH
+  gpio_install_isr_service(0);                                                  // Install  GPIO ISR service, which allows per-pin GPIO interrupt handlers
+  gpio_isr_handler_add(INPUT_PIN, gpio_interrupt_handler, (void *)INPUT_PIN);   // Configure gpio_interrupt_handler function has ISR handler for INPUT_PIN
 }
 
 void printLocalTime(){
@@ -886,41 +765,189 @@ void printLocalTime(){
   }
 }
 
-void leer_rtc(){
-  char buff[5];
-  rtc.refresh();
-  hora      = rtc.hour();
-  minuto    = rtc.minute();
-  segundo   = rtc.second();
-  year      = rtc.year();
-  month     = rtc.month();
-  day       = rtc.day();
-  dayOfWeek = rtc.dayOfWeek()-1;
-
-  int decminuto = int(minuto/10);
-  int uniminuto = int(minuto%10);
-  
-  if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
-    Serial.print("Tiempo del RTC: ");
-    Serial.print(year);
-    Serial.print('/');
-    Serial.print(month);
-    Serial.print('/');
-    Serial.print(day);
-    Serial.print(" ");
-    Serial.print(" (");
-    Serial.print(daysOfTheWeek[dayOfWeek]);
-    Serial.print(") ");
-    Serial.print(hora);
-    Serial.print(':');
-    Serial.print(minuto);
-    Serial.print(':');
-    Serial.println(segundo);
-    xSemaphoreGive(xSemaforo_Serial);
+void setRTC(){
+  struct tm timeinfo;
+  URTCLIB_WIRE.begin();                                                           //Start RTC
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("No se obtuvo el tiempo");
+    return;
   }
+  rtc.set(timeinfo.tm_sec, timeinfo.tm_min, timeinfo.tm_hour, timeinfo.tm_wday+1, timeinfo.tm_mday, timeinfo.tm_mon+1, timeinfo.tm_year-100);
+  printLocalTime();
+}
+
+void WriteSD(void *pvParameters){
+  String      SD_Data;
+  for (;;){
+      if (xSemaphoreTake(xSemaforo_Datos, (TickType_t) 5 ) == pdTRUE){
+        SD_Data = String(year)                + ","   +
+                  String(month)               + ","   +
+                  String(day)                 + ","   +
+                  String(hora)                + ","   +
+                  String(minuto)              + ","   +
+                  String(segundo)             + ","   +
+                  String(temperatura_colmena) + ","   + 
+                  String(humedad_colmena)     + ","   +
+                  String(temperatura_ambiente)+ ","   +
+                  String(humedad_ambiente)    + ","   +
+                  String(presion_atmosferica) + ","   +
+                  String(indice_luminico)     + "\r\n";        
+        xSemaphoreGive(xSemaforo_Datos);
+      }
+    appendFile(SD, "/colmena.csv", SD_Data.c_str());
+    if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+      Serial.print("Adicionado a la SD");
+      Serial.println(SD_Data.c_str());
+      xSemaphoreGive(xSemaforo_Serial);
+    }
+    vTaskDelay(SD_PERIOD);
+  }
+}
+
+void WDT(void *pvParameters){
+  TimerHandle_t xAutoReloadTimer;
+  xAutoReloadTimer = xTimerCreate("AutoReloadTimer",                            // Name of the timer
+    pdMS_TO_TICKS(TIMER_PERIOD),                                                // The period of the timer specified in ticks
+    pdFALSE,                                                                    // The timer will not auto-reload when it expires
+    0,                                                                          // Identifier of the timer
+    autoReloadTimerCallback);                                                   // Callback function
+  xTimerStart(xAutoReloadTimer, 0);                                             // Temporizador para apagar luz del fondo del LCD
+  for (;;){
+    if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+      Serial.println("Reiniciando el temporizador del Watchdog");
+      xSemaphoreGive(xSemaforo_Serial);
+    }
+    esp_task_wdt_reset();
+    if(cpt>0){
+      lcd.backlight();
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.println("Interrupción recibida\n");
+        xSemaphoreGive(xSemaforo_Serial);
+      }
+      xTimerStart(xAutoReloadTimer, 0);
+      cpt=0;
+      Serial.println();
+      readFile(SD, "/colmena.csv");
+      Serial.println(); 
+
+    }
+    if ((SD.totalBytes()*.99) <  SD.usedBytes()){
+      deleteFile(SD, "/colmena.csv");
+      Serial.println("SD llena, el archivo colmena.csv ha sido borrado.");
+      File file = SD.open("/colmena.csv");
+      writeFile(SD, "/colmena.csv", "Colmena Altos de Cantaclaro\n");
+      appendFile(SD, "/colmena.csv", "Juan Bernardo Ceballos\n");
+      appendFile(SD, "/colmena.csv", "Latitud: 2°30'40.1 Norte   Longitud: 76°33'20.5 Oeste  Elevacion: 1820 metros\n");
+      appendFile(SD, "/colmena.csv",  "Year, Month, Day, Hour, Minute, Second, Hive Temperature (°C), Hive Humidity (%), Ambient Temperature (°C), Ambient Humidity (%), Atmospheric presure hPa, Luminic index (normalized) \n");
+      readFile(SD, "/colmena.csv");
+      Serial.printf("Espacio total de la SD: %lluMB\n", SD.totalBytes() / (1024 * 1024));
+      Serial.printf("Espacio utilizado en la SD: %lluMB\n", SD.usedBytes() / (1024 * 1024));
+      Serial.println();
+      file.close();
+    }
+    vTaskDelay(WDT_RST_PERIOD);
+  }
+}
+
+void setup(){
+  Serial.begin(115200);
+
+  lcd.init();  
+  lcd.backlight();
+  lcd.createChar(0, degree);
   lcd.setCursor(0, 0);
-  sprintf(buff, "%2d:%d%d", hora, decminuto, uniminuto);
-  lcd.print(buff);
+  lcd.print(" Juan Ceballos 2025");
+
+  xSemaforo_Serial  = xSemaphoreCreateMutex();
+  xSemaforo_WiFi    = xSemaphoreCreateMutex();
+  xSemaforo_Datos   = xSemaphoreCreateMutex();
+
+  TaskHandle_t  xHandleSensores   = NULL;
+  TaskHandle_t  xHandleMQTT       = NULL;
+  TaskHandle_t  xHandleWeb        = NULL;
+  TaskHandle_t  xHandleDB         = NULL;
+  TaskHandle_t  xHandleSD         = NULL;
+  TaskHandle_t  xHandleWDT        = NULL;
+
+  dht_1.begin();                                                                // Iniciar sensor humedad y temperatura colmena
+  dht_2.begin();                                                                // Iniciar sensor humedad y temperatura externo
+  setBME();                                                                     // Iniciar sensor de presión atmosférica
+  pinMode(LED, OUTPUT);                                                         // LED azul se enciende cuando se adquieren datos
+  setINT();
+
+  connectToWiFi();
+  
+  setRTC();                                                                     // Obtener tiempo de la  Internet e iniciar RTC
+  xTaskCreatePinnedToCore(
+                LeerSensores,                                                   // Entry function of the task
+                "Sensores",                                                     // Name of the task
+                2048,                                                           // The number of words to allocate for use as the task's stack 
+                NULL,                                                           // No parameter passed to the task
+                Priority_1,                                           
+                &xHandleSensores,
+                0);                                                             // Task executed on core 0
+
+  setSD();                                                                      // Iniciart tarjeta de memoria SD
+  xTaskCreatePinnedToCore(
+                WriteSD,                                                        // Entry function of the task
+                "SD",                                                           // Name of the task
+                4096,                                                           // The number of words to allocate for use as the task's stack 
+                NULL,                                                           // No parameter passed to the task
+                Priority_2,                                           
+                &xHandleSD,
+                0);                                                             // Task executed on core 0
+
+  xTaskCreatePinnedToCore(
+                PostWeb,                                                        // Entry function of the task
+                "POST_WEB",                                                     // Name of the task
+                4096,                                                           // The number of words to allocate for use as the task's stack 
+                NULL,                                                           // No parameter passed to the task
+                Priority_2,                                                     // Priority of the task
+                &xHandleWeb,
+                1);                                                             // Task executed on core 1
+  xTaskCreatePinnedToCore(
+                PostDB,                                                         // Entry function of the task
+                "POST_DB",                                                      // Name of the task
+                4096,                                                           // The number of words to allocate for use as the task's stack 
+                NULL,                                                           // No parameter passed to the task
+                Priority_2,                                                     // Priority of the task
+                &xHandleDB,
+                1);                                                             // Task executed on core 1
+
+  setMQTT();                                                                    // Conectar al MQTT broker
+  xTaskCreatePinnedToCore(
+                MQTT,                                                           // Entry function of the task
+                "MQTT",                                                         // Name of the task
+                4096,                                                           // The number of words to allocate for use as the task's stack 
+                NULL,                                                           // No parameter passed to the task
+                Priority_2,                                                     // Priority of the task
+                &xHandleMQTT,
+                1);                                                             // Task executed on core 1
+        
+  setWDT();                                                                     // Iniciar el temporizador del Watchdog
+  xTaskCreatePinnedToCore(
+                WDT,                                                            // Entry function of the task
+                "WDT",                                                          // Name of the task
+                4096,                                                           // The number of words to allocate for use as the task's stack 
+                NULL,                                                           // No parameter passed to the task
+                Priority_1,                                                     // Priority of the task
+                &xHandleWDT,
+                0);                                                             // Task executed on core 0
+                                                                       
+  for (;;){
+    vTaskDelay(ML_PERIOD); 
+    ++bootCount;
+    if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+      Serial.print("Número de reinicios del ESP32: "); 
+      Serial.println(bootCount); 
+      Serial.println("ESP32 entrando en sueño profundo"); 
+      xSemaphoreGive(xSemaforo_Serial);
+    }
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+    Serial.flush();
+    esp_deep_sleep_start();
+  };
 }
 
 void loop(){
