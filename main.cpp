@@ -336,123 +336,7 @@ void appendFile(fs::FS &fs, const char * path, const char * message){
   file.close();
 }
 
-void MQTT(void *pvParameters){
-  char    yearString[8];
-  char    monthString[8];
-  char    dayString[8];
-  char    hourString[8];
-  char    minuteString[8];
-  char    secondString[8];
-  char    tempString[8];
-  char    humString[8];
-  char    temp_a_String[8];
-  char    hum_a_String[8];
-  char    press_String[8];
-  char    indice_String[8];
-  char    frame[49];
-  // String  trama;
-  for (;;){
-    mclient.loop();
-    frame[0]= '\0';
-    if (xSemaphoreTake(xSemaforo_Datos, (TickType_t) 5 ) == pdTRUE){
-      dtostrf(year, 1, 0, yearString);
-      dtostrf(month, 1, 0, monthString);
-      dtostrf(day, 1, 0, dayString);
-      dtostrf(hora, 1, 0, hourString);
-      dtostrf(minuto, 1, 0, minuteString);
-      dtostrf(segundo, 1, 0, secondString);
-      dtostrf(temperatura_colmena, 1, 1, tempString);
-      dtostrf(humedad_colmena, 1, 0, humString);
-      dtostrf(temperatura_ambiente, 1, 1, temp_a_String);
-      dtostrf(humedad_ambiente, 1, 0, hum_a_String);
-      dtostrf(presion_atmosferica, 1, 2, press_String);
-      dtostrf(indice_luminico, 1, 2, indice_String);
-      strcat(frame, yearString);
-      strcat(frame, ",");
-      strcat(frame, monthString);
-      strcat(frame, ",");
-      strcat(frame, dayString);
-      strcat(frame, ",");
-      strcat(frame, hourString);
-      strcat(frame, ",");
-      strcat(frame, minuteString);
-      strcat(frame, ",");
-      strcat(frame, secondString);
-      strcat(frame, ",");
-      strcat(frame, tempString);
-      strcat(frame, ",");
-      strcat(frame, humString);
-      strcat(frame, ",");
-      strcat(frame, temp_a_String);
-      strcat(frame, ",");
-      strcat(frame, hum_a_String);
-      strcat(frame, ",");
-      strcat(frame, press_String);
-      strcat(frame, ",");
-      strcat(frame, indice_String);
-      strcat(frame, "\n");
-      strcat(frame, "\0");
-      xSemaphoreGive(xSemaforo_Datos);
-    }
-    if (xSemaphoreTake(xSemaforo_WiFi, (TickType_t) 5 ) == pdTRUE){
-      if (!mclient.connected()) {
-        reconnect();
-      }
-      mclient.publish("emqx/temperatura_colmena", tempString);
-      mclient.publish("emqx/humedad_colmena", humString);
-      mclient.publish("emqx/temperatura_ambiente", temp_a_String);
-      mclient.publish("emqx/humedad_ambiente", hum_a_String);
-      mclient.publish("emqx/presion", press_String);
-      mclient.publish("emqx/indice", indice_String);
-      mclient.publish("emqx/trama", frame);
-      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
-        Serial.print("Enviar MQTT: ");
-        Serial.println(frame);
-        xSemaphoreGive(xSemaforo_Serial);
-      }
-      xSemaphoreGive(xSemaforo_WiFi);
-    }
-    vTaskDelay(MQTT_PERIOD);
-  }
-}
 
-void PostWeb(void *pvParameters){
-  String      httpRequestData;
-  int         httpResponseCode;
-  WiFiClient  client;
-  HTTPClient  http;
-  for (;;){
-      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
-        Serial.println("Enviar POST a la Web");
-        xSemaphoreGive(xSemaforo_Serial);
-      }
-      if (xSemaphoreTake(xSemaforo_Datos, (TickType_t) 5 ) == pdTRUE){
-        httpRequestData = "api_key="  + apiKey + 
-                          "&field1="  + String(temperatura_colmena)   + 
-                          "&field2="  + String(humedad_colmena)       + 
-                          "&field4="  + String(temperatura_ambiente)  + 
-                          "&field5="  + String(humedad_ambiente)      + 
-                          "&field7="  + String(presion_atmosferica)   +
-                          "&field8="  + String(indice_luminico);    
-        xSemaphoreGive(xSemaforo_Datos);
-      }
-      if (xSemaphoreTake(xSemaforo_WiFi, (TickType_t) 5 ) == pdTRUE){
-        http.begin(client, serverName);
-        http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-        httpResponseCode = http.POST(httpRequestData);
-        if (httpResponseCode>0) {
-          Serial.print("Respuesta HTTP al POST del servidor remoto: ");
-          Serial.println(httpResponseCode);
-        } else {
-          Serial.print("Código de error del servidor remoto: ");
-          Serial.println(httpResponseCode);
-        }
-        http.end();
-        xSemaphoreGive(xSemaforo_WiFi);
-      }
-    vTaskDelay(WEB_PERIOD);
-  }
-}
 
 void PostDB(void *pvParameters){
   String      httpRequestData;
@@ -630,8 +514,8 @@ void testFileIO(fs::FS &fs, const char * path){
 
 void callback(char *topic, byte *payload, unsigned int length) {
   Serial.print("Mensaje recibido para el topico: ");
-  Serial.println(topic);
-  Serial.print(". Mensaje: ");
+  Serial.print(topic);
+  Serial.println(". Mensaje: ");
   String messageTemp;
   for (int i = 0; i < length; i++) {
     Serial.print((char) payload[i]);
@@ -672,6 +556,165 @@ void setMQTT(){
     mclient.publish(topic, "Latitud: 2°30'40.1 Norte   Longitud: 76°33'20.5 Oeste  Elevacion: 1820 metros");
     mclient.publish("emqx/trama", "Year, Month, Day, Hour, Minute, Second, Hive Temperature (°C), Hive Humidity (%), Ambient Temperature (°C), Ambient Humidity (%), Atmospheric presure (hPa), Luminic index (normalized)");
     mclient.subscribe(topic);
+}
+
+void MQTT(void *pvParameters){
+  char    yearString[8];
+  char    monthString[8];
+  char    dayString[8];
+  char    hourString[8];
+  char    minuteString[8];
+  char    secondString[8];
+  char    tempString[8];
+  char    humString[8];
+  char    temp_a_String[8];
+  char    hum_a_String[8];
+  char    press_String[8];
+  char    indice_String[8];
+  char    frame[49];
+  for (;;){
+    mclient.loop();
+    yearString[0]     = '\0';
+    monthString[0]    = '\0';
+    dayString[0]      = '\0';
+    hourString[0]     = '\0';
+    minuteString[0]   = '\0';
+    secondString[0]   = '\0';
+    tempString[0]     = '\0';
+    humString[0]      = '\0';
+    temp_a_String[0]  = '\0';
+    hum_a_String[0]   = '\0';
+    press_String[0]   = '\0';
+    indice_String[0]  = '\0';
+    frame[0]          = '\0';
+    if (xSemaphoreTake(xSemaforo_Datos, (TickType_t) 5 ) == pdTRUE){
+      dtostrf(year, 1, 0, yearString);
+      dtostrf(month, 1, 0, monthString);
+      dtostrf(day, 1, 0, dayString);
+      dtostrf(hora, 1, 0, hourString);
+      dtostrf(minuto, 1, 0, minuteString);
+      dtostrf(segundo, 1, 0, secondString);
+      dtostrf(temperatura_colmena, 1, 1, tempString);
+      dtostrf(humedad_colmena, 1, 0, humString);
+      dtostrf(temperatura_ambiente, 1, 1, temp_a_String);
+      dtostrf(humedad_ambiente, 1, 0, hum_a_String);
+      dtostrf(presion_atmosferica, 1, 2, press_String);
+      dtostrf(indice_luminico, 1, 2, indice_String);
+      strcat(frame, yearString);
+      strcat(frame, ",");
+      strcat(frame, monthString);
+      strcat(frame, ",");
+      strcat(frame, dayString);
+      strcat(frame, ",");
+      strcat(frame, hourString);
+      strcat(frame, ",");
+      strcat(frame, minuteString);
+      strcat(frame, ",");
+      strcat(frame, secondString);
+      strcat(frame, ",");
+      strcat(frame, tempString);
+      strcat(frame, ",");
+      strcat(frame, humString);
+      strcat(frame, ",");
+      strcat(frame, temp_a_String);
+      strcat(frame, ",");
+      strcat(frame, hum_a_String);
+      strcat(frame, ",");
+      strcat(frame, press_String);
+      strcat(frame, ",");
+      strcat(frame, indice_String);
+      strcat(frame, "\n");
+      strcat(frame, "\0");
+      xSemaphoreGive(xSemaforo_Datos);
+    }
+    if (xSemaphoreTake(xSemaforo_WiFi, (TickType_t) 5 ) == pdTRUE){
+      if (!mclient.connected()) {
+        reconnect();
+      }
+      mclient.publish("emqx/temperatura_colmena", tempString);
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.print("Temperatura MQTT: ");
+        Serial.println(tempString);
+        xSemaphoreGive(xSemaforo_Serial);
+      }
+      mclient.publish("emqx/humedad_colmena", humString);
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.print("Humedad MQTT: ");
+        Serial.println(humString);
+        xSemaphoreGive(xSemaforo_Serial);
+      }
+      mclient.publish("emqx/temperatura_ambiente", temp_a_String);
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.print("Temperatura ambiente MQTT: ");
+        Serial.println(temp_a_String);
+        xSemaphoreGive(xSemaforo_Serial);
+      }
+      mclient.publish("emqx/humedad_ambiente", hum_a_String);
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.print("Humedad ambiente MQTT: ");
+        Serial.println(hum_a_String);
+        xSemaphoreGive(xSemaforo_Serial);
+      }
+      mclient.publish("emqx/presion", press_String);
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.print("Presión atmosférica MQTT: ");
+        Serial.println(press_String);
+        xSemaphoreGive(xSemaforo_Serial);
+      }
+      mclient.publish("emqx/indice", indice_String);
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.print("Indice Lumínico MQTT: ");
+        Serial.println(indice_String);
+        xSemaphoreGive(xSemaforo_Serial);
+      }
+      mclient.publish("emqx/trama", frame);
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.print("Enviando por MQTT: ");
+        Serial.println(frame);
+        xSemaphoreGive(xSemaforo_Serial);
+      }
+      xSemaphoreGive(xSemaforo_WiFi);
+    }
+    vTaskDelay(MQTT_PERIOD);
+  }
+}
+
+void PostWeb(void *pvParameters){
+  String      httpRequestData;
+  int         httpResponseCode;
+  WiFiClient  client;
+  HTTPClient  http;
+  for (;;){
+      if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
+        Serial.println("Enviar POST a la Web");
+        xSemaphoreGive(xSemaforo_Serial);
+      }
+      if (xSemaphoreTake(xSemaforo_Datos, (TickType_t) 5 ) == pdTRUE){
+        httpRequestData = "api_key="  + apiKey + 
+                          "&field1="  + String(temperatura_colmena)   + 
+                          "&field2="  + String(humedad_colmena)       + 
+                          "&field4="  + String(temperatura_ambiente)  + 
+                          "&field5="  + String(humedad_ambiente)      + 
+                          "&field7="  + String(presion_atmosferica)   +
+                          "&field8="  + String(indice_luminico);    
+        xSemaphoreGive(xSemaforo_Datos);
+      }
+      if (xSemaphoreTake(xSemaforo_WiFi, (TickType_t) 5 ) == pdTRUE){
+        http.begin(client, serverName);
+        http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+        httpResponseCode = http.POST(httpRequestData);
+        if (httpResponseCode>0) {
+          Serial.print("Respuesta HTTP al POST del servidor remoto: ");
+          Serial.println(httpResponseCode);
+        } else {
+          Serial.print("Código de error del servidor remoto: ");
+          Serial.println(httpResponseCode);
+        }
+        http.end();
+        xSemaphoreGive(xSemaforo_WiFi);
+      }
+    vTaskDelay(WEB_PERIOD);
+  }
 }
 
 void setBME(){
@@ -797,7 +840,7 @@ void WriteSD(void *pvParameters){
       }
     appendFile(SD, "/colmena.csv", SD_Data.c_str());
     if (xSemaphoreTake(xSemaforo_Serial, (TickType_t) 5 ) == pdTRUE){
-      Serial.print("Adicionado a la SD");
+      Serial.print("Adicionado a la SD: ");
       Serial.println(SD_Data.c_str());
       xSemaphoreGive(xSemaforo_Serial);
     }
@@ -875,10 +918,7 @@ void setup(){
   setBME();                                                                     // Iniciar sensor de presión atmosférica
   pinMode(LED, OUTPUT);                                                         // LED azul se enciende cuando se adquieren datos
   setINT();
-
-  connectToWiFi();
-  
-  setRTC();                                                                     // Obtener tiempo de la  Internet e iniciar RTC
+                                                                 
   xTaskCreatePinnedToCore(
                 LeerSensores,                                                   // Entry function of the task
                 "Sensores",                                                     // Name of the task
@@ -897,6 +937,8 @@ void setup(){
                 Priority_2,                                           
                 &xHandleSD,
                 0);                                                             // Task executed on core 0
+
+  connectToWiFi();
 
   xTaskCreatePinnedToCore(
                 PostWeb,                                                        // Entry function of the task
@@ -934,7 +976,8 @@ void setup(){
                 Priority_1,                                                     // Priority of the task
                 &xHandleWDT,
                 0);                                                             // Task executed on core 0
-                                                                       
+  
+  setRTC();                                                                     // Obtener tiempo de la  Internet e iniciar RTC      
   for (;;){
     vTaskDelay(ML_PERIOD); 
     ++bootCount;
