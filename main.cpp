@@ -42,6 +42,7 @@ Bateria         +Bat
 #include <Adafruit_BME280.h>
 #include <uRTCLib.h>
 #include <WiFi.h>
+#include <WiFiMulti.h>
 #include <PicoMQTT.h>
 #include <PicoWebsocket.h>
 #include <PubSubClient.h>
@@ -92,6 +93,10 @@ const UBaseType_t Priority_2        =   1;
 SemaphoreHandle_t xSemaforo_Serial  =   NULL;
 SemaphoreHandle_t xSemaforo_WiFi    =   NULL;
 SemaphoreHandle_t xSemaforo_Datos   =   NULL;
+
+WiFiMulti         wifiMulti;
+const uint32_t    connectTimeoutMs  = 10000;
+
 const             IPAddress         host_mac(192,168,18,212);
 /* Credenciales WokWi
 const char* ssid                    = "Wokwi-GUEST";              //Simulador WokWi
@@ -153,17 +158,42 @@ void autoReloadTimerCallback(TimerHandle_t xTimer){
 
 void connectToWiFi() {
   WiFi.mode(WIFI_STA);                        
-  WiFi.begin(ssid, password);
-  vTaskDelay(3000);
-  Serial.printf("Conectando a %s", ssid);
-  lcd.setCursor(6, 2);
-  lcd.print(ssid);
-  while (WiFi.status() != WL_CONNECTED) {
-    vTaskDelay(500);
+  // WiFi.begin(ssid, password);
+  int n = WiFi.scanNetworks();
+  Serial.println("scan done");
+  if (n == 0) {
+      Serial.println("no networks found");
+  } 
+  else {
+    Serial.print(n);
+    Serial.println(" networks found");
+    for (int i = 0; i < n; ++i) {
+      // Print SSID and RSSI for each network found
+      Serial.print(i + 1);
+      Serial.print(": ");
+      Serial.print(WiFi.SSID(i));
+      Serial.print(" (");
+      Serial.print(WiFi.RSSI(i));
+      Serial.print(")");
+      Serial.println((WiFi.encryptionType(i) == WIFI_AUTH_OPEN)?" ":"*");
+      delay(10);
+    }
+  }
+  // vTaskDelay(3000);
+  // Serial.printf("Conectando a %s", ssid);
+  // lcd.setCursor(6, 2);
+  // lcd.print(ssid);
+  // while (WiFi.status() != WL_CONNECTED) {
+  while(wifiMulti.run(connectTimeoutMs) != WL_CONNECTED){
     Serial.print(".");
+    vTaskDelay(1000);
   }
   Serial.println();
-  Serial.printf("ESP32 tiene el IP %s\n", WiFi.localIP().toString().c_str());
+  Serial.print("WiFi connected: ");
+  Serial.print(WiFi.SSID());
+  Serial.print(" ");
+  Serial.println(WiFi.RSSI());
+  // Serial.printf("ESP32 tiene el IP %s\n", WiFi.localIP().toString().c_str());
   Serial.print("IP del Gateway: ");
   Serial.println(WiFi.gatewayIP());
   Serial.print(host_mac);
@@ -938,6 +968,9 @@ void setup(){
                 &xHandleSD,
                 0);                                                             // Task executed on core 0
 
+  wifiMulti.addAP("HomeNet", "Ana_Isabel_Ce");
+  wifiMulti.addAP("HomeNet-2.4G-ext", "Ana_Isabel_Ce");
+  wifiMulti.addAP("Wokwi-GUEST", "");
   connectToWiFi();
 
   xTaskCreatePinnedToCore(
@@ -989,6 +1022,7 @@ void setup(){
     }
     esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
     Serial.flush();
+    lcd.noBacklight();
     esp_deep_sleep_start();
   };
 }
